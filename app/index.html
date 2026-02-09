@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Chat WebSocket</title>
+  <style>
+  body {
+    margin: 0;
+    padding-left: 10%;
+    padding-right: 10%;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    background: #0f0f0f;
+    color: #eee;
+    display: flex;
+    flex-direction: column;
+    height: 90vh;
+  }
+
+  #messages {
+    flex: 1;
+    padding: 15px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .message {
+    max-width: 70%;
+    padding: 10px 14px;
+    border-radius: 14px;
+    font-size: 14px;
+    line-height: 1.4;
+    word-wrap: break-word;
+  }
+
+  .message.me {
+    align-self: flex-end;
+    background: #007bff;
+    color: white;
+    border-bottom-right-radius: 4px;
+  }
+
+  .message.other {
+    align-self: flex-start;
+    background: #2a2a2a;
+    border-bottom-left-radius: 4px;
+  }
+
+  .message.bot {
+    align-self: flex-start;
+    background: #1b1b1b;
+    border-left: 4px solid #00ff9c;
+    font-style: italic;
+  }
+
+  .time {
+    display: block;
+    font-size: 10px;
+    opacity: 0.6;
+    margin-top: 4px;
+  }
+
+  #typing {
+  color: #00ff9c;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-style: italic;
+  }
+
+
+  .input-bar {
+    display: flex;
+    gap: 8px;
+    padding: 10px;
+    background: #111;
+    border-top: 1px solid #222;
+  }
+
+  input {
+    flex: 1;
+    padding: 10px;
+    border-radius: 8px;
+    border: none;
+    outline: none;
+    background: #222;
+    color: #eee;
+  }
+
+  button {
+    padding: 10px 16px;
+    border-radius: 8px;
+    border: none;
+    background: #00ff9c;
+    cursor: pointer;
+    font-weight: bold;
+  }
+
+  button:hover {
+    opacity: 0.85;
+  }
+</style>
+
+</head>
+<body>
+  <div id="messages"></div>
+  <div id="typing"></div>
+
+  <div class="input-bar">
+    <input type="text" id="username" placeholder="Tu nombre">
+    <input type="text" id="messageInput" placeholder="Mensaje">
+    <button id="sendButton">Enviar</button>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+
+</html>
