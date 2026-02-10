@@ -12,36 +12,48 @@ const usernameInput = document.getElementById('username');
 
 function connect() {
   // Crear conexión WebSocket
+  console.log('🔌 Conectando a WebSocket...');
   ws = new WebSocket(WS_URL);
-
   
   // Cuando se conecta...
     ws.onopen = () => {
+        console.log('✅ Conectado al servidor');
         ws.send(JSON.stringify({
             type: 'setUsername',
             username: currentUsername
         }));
     };
-
   
   // Cuando llega un mensaje...
   ws.onmessage = (event) => {
   const data = JSON.parse(event.data);
   console.log('RECIBIDO:', event.data);
 
-  if (data.type === 'typing') {
-    typingDiv.textContent = `${data.username} está escribiendo...`;
+  // TIPO 1: Indicador de "escribiendo..."
 
-    clearTimeout(typingTimeout);
-    typingTimeout = setTimeout(() => {
-      typingDiv.textContent = '';
-    }, 1500);
-  }
+  if (data.type === 'typing') {
+      if (data.username) {
+        typingDiv.textContent = `${data.username} está escribiendo...`;
+        
+        // Limpiar después de 1.5 segundos
+        clearTimeout(typingTimeout);
+        typingTimeout = setTimeout(() => {
+          typingDiv.textContent = '';
+        }, 1500);
+      } else {
+        // Si username es null, limpiar inmediatamente
+        typingDiv.textContent = '';
+      }
+    }
 
   if (data.type === 'chat') {
-    typingDiv.textContent = '';
-    displayMessage(data.data);
-  }
+      // Limpiar indicador de escritura
+      typingDiv.textContent = '';
+      clearTimeout(typingTimeout);
+      
+      // Mostrar mensaje
+      displayMessage(data.data);
+    }
 };
 
   
@@ -50,30 +62,53 @@ function connect() {
     console.log('Desconectado');
     // Reconectar después de 3 segundos
     setTimeout(connect, 3000);
+    typingDiv.textContent = '🔴 Desconectado - Reconectando...';
+     // Reconectar después de 3 segundos
+    setTimeout(connect, 3000);
+  };
+
+  // Errores
+  ws.onerror = (error) => {
+    console.error('❌ Error en WebSocket:', error);
   };
 }
 
 // Iniciar conexión
 connect();
 
+// ============================================
+// ENVIAR MENSAJE
+// ============================================
+
 function sendMessage() {
   const text = messageInput.value.trim();
   
-  // Verificar que hay texto y conexión abierta
-  if (text && ws.readyState === WebSocket.OPEN) {
+  if (!text) return; // No enviar mensajes vacíos
+  
+  if (ws.readyState === WebSocket.OPEN) {
     // Crear objeto del mensaje
     const message = {
       type: 'chat',
       text: text
     };
     
+    console.log('📤 Enviando:', message);
+    
     // Enviar como JSON
     ws.send(JSON.stringify(message));
     
     // Limpiar input
     messageInput.value = '';
+    messageInput.focus();
+  } else {
+    console.warn('⚠️ WebSocket no está conectado');
+    typingDiv.textContent = '⚠️ No conectado al servidor';
   }
 }
+
+// ============================================
+// EVENT LISTENERS
+// ============================================
 
 // Escuchar clic en botón
 sendButton.addEventListener('click', sendMessage);
@@ -85,22 +120,36 @@ messageInput.addEventListener('keypress', (e) => {
   }
 });
 
+// Indicador de "escribiendo..."
+let lastTypingNotification = 0;
+
 messageInput.addEventListener('input', () => {
-  if (ws.readyState === WebSocket.OPEN) {
+  const now = Date.now();
+
+  // Solo enviar notificación cada 500ms (evitar spam)
+  if (ws.readyState === WebSocket.OPEN && now - lastTypingNotification > 500) {
     ws.send(JSON.stringify({
       type: 'typing'
     }));
+    
+    lastTypingNotification = now;
   }
 });
 
-
+// ============================================
+// MOSTRAR MENSAJES
+// ============================================
 
 function displayMessage(message) {
   const messageDiv = document.createElement('div');
 
-  let className = 'message other';
-  if (message.username === currentUsername) className = 'message me';
-  if (message.username === 'Bot') className = 'message bot';
+  if (message.username === currentUsername) {
+    className = 'message me';
+  } else if (message.username === '🤖 Aideijo') {  // ✅ CORREGIDO
+    className = 'message bot';
+  } else if (message.username === '⚙️ Sistema') {
+    className = 'message system';
+  }
 
   messageDiv.className = className;
 
@@ -129,7 +178,6 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
-
 //cambiar nombre de usuario
 
 usernameInput.addEventListener('change', (e) => {
@@ -144,6 +192,33 @@ usernameInput.addEventListener('change', (e) => {
   }
 });
 
+// ============================================
+// SEGURIDAD
+// ============================================
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+// ============================================
+// DEBUG
+// ============================================
+
+// Mostrar estado de conexión en consola
+setInterval(() => {
+  const estados = {
+    0: 'CONNECTING',
+    1: 'OPEN',
+    2: 'CLOSING',
+    3: 'CLOSED'
+  };
+  
+  if (ws && estados[ws.readyState] !== 'OPEN') {
+    console.log(`📊 Estado WebSocket: ${estados[ws.readyState]}`);
+  }
+}, 5000);
 
 /* Flujo completo de un mensaje
 ```

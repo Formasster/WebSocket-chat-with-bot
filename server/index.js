@@ -1,29 +1,59 @@
-// 1. IMPORTAR MÓDULOS
-const { GoogleGenerativeAI } = require('@google/generative-ai');
-require('dotenv').config();
-
-console.log('ENV KEY:', process.env.GEMINI_API_KEY?.slice(0, 6));
-
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-
-const model = genAI.getGenerativeModel({
-  model: 'gemini-flash-latest'
-});
-
-
-
-async function askBot(prompt) {
-  const result = await model.generateContent(prompt);
-  return result.response.text();
-}
-
-
 const WebSocket = require('ws');
 const http = require('http');
 const sqlite3 = require('sqlite3').verbose();
 
-// Crear/abrir archivo de base de datos
-// Si 'chat.db' no existe, se crea automáticamente
+
+async function askBot(question, username) {
+  return new Promise((resolve, reject) => {
+    const postData = JSON.stringify({
+      text: question,
+      user: username
+    });
+
+    const options = {
+      hostname: '127.0.0.1',
+      port: 8000,
+      path: '/bot',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(postData)
+      }
+    };
+
+  const req = http.request(options, (res) => {
+    console.log('status: ' + res.statusCode);
+
+    if (res.statusCode !== 200) {
+      reject(new Error('FastAPI no respondió bien'));
+      return;
+    }
+
+    let data = '';
+    res.on('data', chunk => {
+      data += chunk;
+    });
+    res.on('end', () => {
+      try {
+        resolve(JSON.parse(data));
+      } catch (e) {
+        reject(e);
+      }
+    });
+  });
+
+  req.on('error', (e) => {
+    reject(e);
+  });
+
+  req.write(postData);
+  req.end();
+});
+}
+
+// ============================================
+// CONFIGURAR BASE DE DATOS
+// ============================================
 const db = new sqlite3.Database('./chat.db', (err) => {
   if (err) {
     console.error('Error:', err);
@@ -63,6 +93,8 @@ function generateMessageId() {
   return `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 }
 // Ejemplo: "msg_1707567890456_p9x2m5n7k"
+
+
 
 // 3. CREAR SERVIDORES HTTP Y WEBSOCKET
 // --------------------------------------------
@@ -106,6 +138,9 @@ wss.on('connection', (ws) => {//Es un "event listener" (escuchador de eventos)
   });
   console.log(`Cliente conectado: ${clientId} (Total: ${clients.size})`);
 
+  // Historial
+    sendPreviousMessages(ws);
+
   // Cambiar nombre de usuario
 
   function handleSetUsername(clientId, message) {
@@ -119,9 +154,7 @@ wss.on('connection', (ws) => {//Es un "event listener" (escuchador de eventos)
 }
 
   
-
   // ESCUCHAR MENSAJES DE ESTE CLIENTE
-  sendPreviousMessages(ws);
 
   ws.on('message', (data) => {
     // data = lo que envió el cliente
@@ -144,18 +177,16 @@ wss.on('connection', (ws) => {//Es un "event listener" (escuchador de eventos)
       if (message.type === 'typing') {
         handleTyping(clientId);
       }
-
-
       
     } catch (error) {
-      console.error('Error:', error);
+      console.error('Error procesando mensaje:', error);
     }
   });
 
   ws.on('close', () => {
   // Eliminar del Map de clientes
   clients.delete(clientId);
-  console.log(`Cliente desconectado: ${clientId}`);
+  console.log(`Cliente desconectado: ${clientId} (Total: ${clients.size})`);
   });
 
   ws.on('error', (error) => {
@@ -164,7 +195,9 @@ wss.on('connection', (ws) => {//Es un "event listener" (escuchador de eventos)
   
 });// FIN wss.on('connection', ...)
 
-
+// ============================================
+// FUNCIONES DE MANEJO DE MENSAJES
+// ============================================
 
   function sendPreviousMessages(ws) {
   // Consultar últimos 50 mensajes de la base de datos
@@ -180,11 +213,14 @@ wss.on('connection', (ws) => {//Es un "event listener" (escuchador de eventos)
       // rows es un array de mensajes
       // Enviamos en orden cronológico (del más antiguo al más nuevo)
       rows.reverse().forEach(msg => {
-        ws.send(JSON.stringify({
-          type: 'chat',
-          data: msg
-        }));
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            type: 'chat',
+            data: msg
+          }));
+        }
       });
+      console.log(`📤 Enviados ${rows.length} mensajes de historial`);
     }
   );
 }
@@ -198,15 +234,22 @@ async function handleChatMessage(clientId, message) {
 
   const text = message.text.trim();
 
-  // 👉 LLAMADA AL BOT
+  // ============================================
+  // 🤖 COMANDO BOT
+  // ============================================
   if (text.startsWith('/bot')) {
     const question = text.replace('/bot', '').trim();
-    if (!question) return;
 
+    if (!question) {
+      // Si escriben solo "/bot" sin pregunta
+      sendSystemMessage('❗ Uso: /bot [tu pregunta]');
+      return;
+    }
+    // Guardar pregunta del usuario
       const userMessage = {
         id: generateMessageId(),
         username: client.username,
-        text: text,
+        text: question,
         timestamp: new Date().toISOString()
       };
 
@@ -215,34 +258,75 @@ async function handleChatMessage(clientId, message) {
         [userMessage.id, userMessage.username, userMessage.text, userMessage.timestamp]
       );
 
-        broadcast(userMessage);
+      broadcast(userMessage);
+
+       // Mostrar "Bot está escribiendo..."
+      broadcastTyping('🤖 Aideijo');
 
     try {
-      const botReply = await askBot(question);
+
+      console.log(`🤖 Pregunta al bot: "${question}" (de ${client.username})`);
+      const botReply = await askBot(question, client.username);
+      const typingDelay = botReply.typing_delay ?? 0;
+
+      console.log(`✅ Bot respondió (delay: ${typingDelay}s)`);
 
       const botMessage = {
         id: generateMessageId(),
         username: '🤖 Aideijo',
-        text: botReply,
+        text: botReply.reply,
         timestamp: new Date().toISOString()
       };
 
       // Guardar respuesta del bot
+      const sendBotMessage = () => {
+        // Guardar en BD
+        db.run(
+          'INSERT INTO messages (id, username, text, timestamp) VALUES (?, ?, ?, ?)',
+          [botMessage.id, botMessage.username, botMessage.text, botMessage.timestamp],
+          (err) => {
+            if (!err) {
+              broadcast(botMessage);
+              // Limpiar indicador de "escribiendo"
+              clearTyping();
+            }
+          }
+        );
+      };
+
+      // Si hay delay, esperar antes de enviar
+        if (typingDelay > 0) {
+          setTimeout(sendBotMessage, typingDelay * 1000);
+        } else {
+          sendBotMessage();
+        }
+      } catch (err) {
+        console.error('❌ Error consultando bot:', err);
+
+        const errorMessage = {
+        id: generateMessageId(),
+        username: '🤖 Aideijo',
+        text: '❌ Lo siento, no pude conectarme con mi servidor. ¿Está corriendo FastAPI en puerto 8000?',
+        timestamp: new Date().toISOString()
+      };
+
       db.run(
         'INSERT INTO messages (id, username, text, timestamp) VALUES (?, ?, ?, ?)',
-        [botMessage.id, botMessage.username, botMessage.text, botMessage.timestamp]
+        [errorMessage.id, errorMessage.username, errorMessage.text, errorMessage.timestamp],
+        (err) => {
+          if (!err) {
+            broadcast(errorMessage);
+            clearTyping();
+          }
+        }
       );
 
-      broadcast(botMessage);
-    } catch (err) {
-      console.error('Error bot:', err);
+      return; // ⛔ No seguir con el flujo normal
+
     }
-
-    return; // ⛔ NO seguir con el flujo normal
-  }
-
-  // 👉 MENSAJE NORMAL
-  const chatMessage = {
+  } else {
+    // 👉 MENSAJE NORMAL
+    const chatMessage = {
     id: generateMessageId(),
     username: client.username,
     text: text,
@@ -253,11 +337,15 @@ async function handleChatMessage(clientId, message) {
     'INSERT INTO messages (id, username, text, timestamp) VALUES (?, ?, ?, ?)',
     [chatMessage.id, chatMessage.username, chatMessage.text, chatMessage.timestamp],
     (err) => {
-      if (!err) {
+      if (err) {
+        console.error('❌ Error guardando mensaje:', err);
+      } else {
+        console.log(`💬 ${client.username}: ${text}`);
         broadcast(chatMessage);
       }
     }
   );
+  }
 }
 
 // Función para manejar evento de "escribiendo..." y notificar a otros clientes
@@ -266,18 +354,20 @@ function handleTyping(clientId) {
   const client = clients.get(clientId);
   if (!client) return;
 
-  const data = JSON.stringify({
-    type: 'typing',
-    username: client.username
-  });
-
-  clients.forEach((c) => {
-    if (c.ws.readyState === WebSocket.OPEN) {
-      c.ws.send(data);
+  // Enviar a todos EXCEPTO al que está escribiendo
+  clients.forEach((c, cId) => {
+    if (cId !== clientId && c.ws.readyState === WebSocket.OPEN) {
+      c.ws.send(JSON.stringify({
+        type: 'typing',
+        username: client.username
+      }));
     }
   });
 }
 
+// ============================================
+// FUNCIONES DE BROADCAST
+// ============================================
 
 function broadcast(message) {
   const data = JSON.stringify({
@@ -291,6 +381,47 @@ function broadcast(message) {
     }
   });
 }
+
+// Broadcast de "escribiendo..." (del bot)
+function broadcastTyping(username) {
+  const data = JSON.stringify({
+    type: 'typing',
+    username: username
+  });
+
+  clients.forEach((client) => {
+    if (client.ws.readyState === WebSocket.OPEN) {
+      client.ws.send(data);
+    }
+  });
+}
+
+// Limpiar indicador de "escribiendo"
+function clearTyping() {
+  const data = JSON.stringify({
+    type: 'typing',
+    username: null // null = limpiar
+  });
+
+  clients.forEach((client) => {
+    if (client.ws.readyState === WebSocket.OPEN) {
+      client.ws.send(data);
+    }
+  });
+}
+
+// Enviar mensaje del sistema
+function sendSystemMessage(text) {
+  const message = {
+    id: generateMessageId(),
+    username: '⚙️ Sistema',
+    text: text,
+    timestamp: new Date().toISOString()
+  };
+  
+  broadcast(message);
+}
+
 
 
 // Función para enviar mensaje a TODOS los clientes conectados
